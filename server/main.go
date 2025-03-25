@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	"golang.org/x/net/websocket"
 )
 
 type Position struct {
