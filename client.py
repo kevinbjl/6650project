@@ -51,7 +51,7 @@ class LagCompensationClient:
         print("WebSocket Connection Closed")
 
 def main():
-    client = LagCompensationClient('ws://localhost:8080')
+    client = LagCompensationClient('ws://localhost:8080/ws')
     client.connect()
 
     # Simulate multiple shots
