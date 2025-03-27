@@ -7,15 +7,17 @@ This is a simple project that implements the lag compensation mechanism used in 
 Server (Go):
 
 1. Maintains game state
-2. Stores historical player/target positions
+2. Stores historical player/target positions in Redis
 3. Implements rewind-based hit detection
 4. Exposes WebSocket API
 
 Client (Python):
 
 1. Simulates network latency
-2. Sends shooting commands
-3. Receives hit detection results
+2. Receives target position from the server
+3. Sends shooting commands
+4. Receives hit detection results
+5. Provides visualization to the user
 
 Key Components:
 
