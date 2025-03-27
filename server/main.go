@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log"
 	"math"
-	"math/rand"
 	"net/http"
 	"sync"
 	"time"
@@ -15,7 +14,7 @@ import (
 )
 
 const (
-	TARGET_RADIUS = 5  // Reduced from 20 to 5
+	TARGET_RADIUS = 5
 	WIDTH         = 800
 	HEIGHT        = 600
 	REDIS_KEY     = "target_positions"
@@ -29,19 +28,8 @@ type Position struct {
 	ServerTime  int64 `json:"serverTime"`
 }
 
-type TargetTrajectory struct {
-	StartX     int
-	StartY     int
-	EndX       int
-	EndY       int
-	StartTime  int64
-	Duration   int64 // milliseconds
-	Velocity   float64
-}
-
 type GameServer struct {
 	targetPositions   []Position
-	currentTrajectory TargetTrajectory
 	clients           map[*websocket.Conn]bool
 	mutex             sync.Mutex
 	serverStartTime   int64
@@ -69,59 +57,6 @@ func NewGameServer() *GameServer {
 		clients:           make(map[*websocket.Conn]bool),
 		serverStartTime:   time.Now().UnixMilli(),
 		redisClient:       rdb,
-	}
-}
-
-func (gs *GameServer) GenerateTrajectory() TargetTrajectory {
-	// More varied and faster trajectories
-	startX := 0
-	startY := rand.Intn(HEIGHT)
-	
-	// Randomize end point with more variance
-	endX := WIDTH
-	endY := startY + rand.Intn(200) - 100  // Can deviate vertically
-
-	// Shorter, faster duration (1-2 seconds)
-	duration := int64(rand.Intn(1000) + 1000)
-	
-	// Calculate velocity for smooth interpolation
-	distance := math.Sqrt(math.Pow(float64(endX-startX), 2) + math.Pow(float64(endY-startY), 2))
-	velocity := distance / float64(duration)
-
-	return TargetTrajectory{
-		StartX:    startX,
-		StartY:    startY,
-		EndX:      endX,
-		EndY:      endY,
-		StartTime: time.Now().UnixMilli(),
-		Duration:  duration,
-		Velocity:  velocity,
-	}
-}
-
-func (gs *GameServer) CalculateCurrentPosition(trajectory TargetTrajectory, currentTime int64) Position {
-	// Calculate progress (0.0 to 1.0)
-	progress := float64(currentTime - trajectory.StartTime) / float64(trajectory.Duration)
-	
-	// Clamp progress between 0 and 1
-	if progress < 0 {
-		progress = 0
-	}
-	if progress > 1 {
-		progress = 1
-	}
-
-	// Smooth interpolation with slight curve
-	smoothProgress := math.Sin(progress * math.Pi / 2)
-
-	x := int(float64(trajectory.StartX) + smoothProgress * float64(trajectory.EndX - trajectory.StartX))
-	y := int(float64(trajectory.StartY) + smoothProgress * float64(trajectory.EndY - trajectory.StartY))
-
-	return Position{
-		X:           x,
-		Y:           y,
-		Timestamp:   currentTime,
-		ServerTime:  currentTime - gs.serverStartTime,
 	}
 }
 
