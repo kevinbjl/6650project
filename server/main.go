@@ -14,11 +14,13 @@ import (
 )
 
 const (
-	TARGET_RADIUS = 5
-	WIDTH         = 800
-	HEIGHT        = 600
+	TARGET_RADIUS = 5   // TODO: this should be stored in the server
+	WIDTH         = 1280
+	HEIGHT        = 720
 	REDIS_KEY     = "target_positions"
 	HIT_RADIUS    = 30  // Increased hit detection radius for easier testing
+	POS_SIZE 	  = 100 // Store last 100 positions
+	COMPENSATION_WINDOW = 250 // Allows 250ms compensation window
 )
 
 type Position struct {
@@ -90,8 +92,8 @@ func (gs *GameServer) storePositionInRedis(pos Position) error {
 		return err
 	}
 
-	// Keep only the last 100 positions
-	gs.redisClient.ZRemRangeByRank(ctx, REDIS_KEY, 0, -101)
+	// Keep the last few positions
+	gs.redisClient.ZRemRangeByRank(ctx, REDIS_KEY, 0, -(POS_SIZE + 1))
 	
 	return nil
 }
@@ -218,7 +220,7 @@ func (gs *GameServer) HandleShoot(conn *websocket.Conn, clientShootTime, serverR
 	adjustedClientTime := clientShootTime + serverTime
 
 	// Lag compensation window (250ms)
-	lagCompensationWindow := int64(250)
+	lagCompensationWindow := int64(COMPENSATION_WINDOW)
 
 	// Get positions from Redis within the compensation window
 	positions, err := gs.getPositionsFromRedis(

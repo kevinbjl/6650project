@@ -5,8 +5,8 @@ import threading
 import time
 
 # Constants
-WIDTH, HEIGHT = 800, 600
-TARGET_RADIUS = 5
+WIDTH, HEIGHT = 1280, 720
+TARGET_RADIUS = 5 # TODO: this should be stored in the server
 CROSSHAIR_SIZE = 15
 MUZZLE_FLASH_TIME = 100  # Flash duration in milliseconds
 HIT_MARKER_TIME = 500   # Hit marker display duration in milliseconds
@@ -14,13 +14,13 @@ HIT_MARKER_TIME = 500   # Hit marker display duration in milliseconds
 # Initialize Pygame
 pygame.init()
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("FPS Shooter Game")
+pygame.display.set_caption("Lag Compensation Test")
 clock = pygame.time.Clock()
 
 # Load Assets
-flash_image = pygame.image.load("./assets/640px-Muzzle_flash_VFX.png")  # Muzzle flash
-background = pygame.image.load("./assets/Screenshot-Doom.jpeg")  # Replace with your background
-flash_image = pygame.transform.scale(flash_image, (50, 50))
+flash_image = pygame.image.load("./assets/muzzle-flash.png")  # Muzzle flash
+background = pygame.image.load("./assets/Screenshot-Va.jpg")  # Replace with your background
+flash_image = pygame.transform.scale(flash_image, (70, 70))
 background = pygame.transform.scale(background, (WIDTH, HEIGHT))
 
 # WebSocket
@@ -124,7 +124,7 @@ def game_loop():
         
         # Draw muzzle flash if active
         if muzzle_flash:
-            screen.blit(flash_image, (WIDTH // 2 - 25, HEIGHT - 250))
+            screen.blit(flash_image, (WIDTH // 2 + 135, HEIGHT - 305))
             if pygame.time.get_ticks() - flash_start_time > MUZZLE_FLASH_TIME:
                 muzzle_flash = False
         

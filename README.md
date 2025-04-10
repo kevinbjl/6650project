@@ -31,7 +31,7 @@ Proposed Workflow:
 Client sends shoot command with:
 
 1. Timestamp
-2. Shooter position
+2. Shooter's aiming position
 3. Target position
 4. Simulated network delay
 
