@@ -31,9 +31,10 @@ type Position struct {
 }
 
 type SyncMessage struct {
-	Type        string `json:"type"`
-	ClientTime  int64  `json:"clientTime"`
-	ServerTime  int64  `json:"serverTime"`
+	Type            string `json:"type"`
+	ClientTime      int64  `json:"clientTime"`
+	ServerRecvTime  int64  `json:"serverRecvTime"`
+	ServerSendTime  int64  `json:"serverSendTime"`
 }
 
 type GameServer struct {
@@ -219,23 +220,14 @@ func (gs *GameServer) BroadcastTargetPosition(pos Position) {
 }
 
 func (gs *GameServer) HandleSync(conn *websocket.Conn, clientTime int64) {
-	serverTime := time.Now().UnixMilli()
+	serverRecvTime := time.Now().UnixMilli() - gs.serverStartTime
+	serverSendTime := time.Now().UnixMilli() - gs.serverStartTime
 	
-	// Calculate clock offset: ((t1 - t0) + (t2 - t3))/2
-	// where t0 = client send time, t1 = server receive time
-	// t2 = server send time, t3 = client receive time
-	// For now we only have t0 and t1, so we'll estimate offset
-	offset := serverTime - clientTime
-	
-	gs.mutex.Lock()
-	gs.clientOffsets[conn] = offset
-	gs.mutex.Unlock()
-	
-	// Send response with server time and original client time
 	response := SyncMessage{
-		Type:       "sync_response",
-		ClientTime: clientTime,
-		ServerTime: serverTime,
+		Type:           "sync_response",
+		ClientTime:     clientTime,
+		ServerRecvTime: serverRecvTime,
+		ServerSendTime: serverSendTime,
 	}
 	
 	conn.WriteJSON(response)
@@ -278,6 +270,7 @@ func (gs *GameServer) HandleConnection(w http.ResponseWriter, r *http.Request) {
 					X: int(data["x"].(float64)),
 					Y: int(data["y"].(float64)),
 				},
+				int64(data["offset"].(float64)),
 			)
 		case "latency_update":
 			// Client is reporting its measured RTT
@@ -296,29 +289,12 @@ func (gs *GameServer) HandleConnection(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (gs *GameServer) HandleShoot(conn *websocket.Conn, clientShootTime, serverReceivedTime int64, clientPerceivePos Position) {
+func (gs *GameServer) HandleShoot(conn *websocket.Conn, clientShootTime, serverReceivedTime int64, clientPerceivePos Position, clientOffset int64) {
 	gs.mutex.Lock()
 	defer gs.mutex.Unlock()
 
-	// Get client's clock offset and latency
-	offset, exists := gs.clientOffsets[conn]
-	if !exists {
-		log.Printf("Warning: No clock offset found for client")
-		offset = 0
-	}
-
-	latency, exists := gs.clientLatencies[conn]
-	if !exists {
-		log.Printf("Warning: No latency measurement found for client")
-		latency = 0
-	}
-
-	// Convert client time to server time using the offset
-	serverTime := serverReceivedTime - gs.serverStartTime
-	adjustedClientTime := clientShootTime + offset
-	
-	// Calculate the target time by rewinding by the measured latency
-	targetTime := adjustedClientTime - latency
+	// Convert client time to server time using the provided offset
+	targetTime := clientShootTime + clientOffset
 
 	// Lag compensation window (250ms)
 	lagCompensationWindow := int64(COMPENSATION_WINDOW)
@@ -336,8 +312,8 @@ func (gs *GameServer) HandleShoot(conn *websocket.Conn, clientShootTime, serverR
 	}
 
 	// Debug logging
-	log.Printf("Shoot attempt - Client pos: (%d, %d), Client Time: %d, Server Time: %d, Offset: %d, Latency: %d", 
-		clientPerceivePos.X, clientPerceivePos.Y, clientShootTime, serverTime, offset, latency)
+	log.Printf("Shoot attempt - Client pos: (%d, %d), Client Time: %d, Server Time: %d, Offset: %d", 
+		clientPerceivePos.X, clientPerceivePos.Y, clientShootTime, targetTime, clientOffset)
 	log.Printf("Looking for positions around time: %d (±%d ms)", targetTime, lagCompensationWindow)
 	log.Printf("Number of positions to check: %d", len(positions))
 
