@@ -3,17 +3,21 @@ import websocket
 import json
 import threading
 import time
+import math
 
 # Constants
 WIDTH, HEIGHT = 1280, 720
 SIDEBAR_WIDTH = 200
 GAME_WIDTH = WIDTH - SIDEBAR_WIDTH
-TARGET_RADIUS = 5 # TODO: this should be stored in the server
+TARGET_RADIUS = 30 # TODO: this should be stored in the server
 CROSSHAIR_SIZE = 15
 MUZZLE_FLASH_TIME = 100  # Flash duration in milliseconds
 HIT_MARKER_TIME = 500   # Hit marker display duration in milliseconds
 MAX_SIMULATED_LATENCY = 500  # Maximum simulated latency in milliseconds
 POSITION_HISTORY_SIZE = 100  # Number of positions to keep in history
+HIT_POINT_TIME = 3000  # How long to show hit point in milliseconds
+KILLCAM_SIZE = 200  # Size of the kill cam box
+KILLCAM_SCALE = 2.0  # How much to zoom in on the target
 
 # Initialize Pygame
 pygame.init()
@@ -24,8 +28,10 @@ clock = pygame.time.Clock()
 # Load Assets
 flash_image = pygame.image.load("./assets/muzzle-flash.png")  # Muzzle flash
 background = pygame.image.load("./assets/Screenshot-Va.jpg")  # Replace with your background
+target_image = pygame.image.load("./assets/target.png")  # Target image
 flash_image = pygame.transform.scale(flash_image, (70, 70))
 background = pygame.transform.scale(background, (GAME_WIDTH, HEIGHT))
+target_image = pygame.transform.scale(target_image, (TARGET_RADIUS * 4, TARGET_RADIUS * 4))  # Scale target to appropriate size
 
 # WebSocket
 client_start_time = int(time.time() * 1000)
@@ -33,6 +39,9 @@ target_position = None  # Current position
 position_history = []  # Buffer of past positions
 last_hit_result = None
 hit_marker_start_time = 0
+hit_point_start_time = 0  # Time when hit point started showing
+last_hit_point = None  # Store the last hit point coordinates
+last_hit_target_pos = None  # Store the target position at the time of hit
 server_offset = 0  # Clock offset between client and server
 measured_latency = 0  # Measured one-way latency in ms
 last_sync_time = 0  # Time when last sync was sent
@@ -48,7 +57,7 @@ def on_error(ws, error):
     print(f"WebSocket Error: {error}")
 
 def on_message(ws, message):
-    global target_position, last_hit_result, hit_marker_start_time, server_offset, measured_latency, last_sync_time, position_history
+    global target_position, last_hit_result, hit_marker_start_time, hit_point_start_time, last_hit_point, last_hit_target_pos, server_offset, measured_latency, last_sync_time, position_history
     try:
         data = json.loads(message)
         
@@ -68,6 +77,18 @@ def on_message(ws, message):
         elif data["type"] == "hit_result":
             last_hit_result = data
             hit_marker_start_time = pygame.time.get_ticks()
+            if data["hit"]:
+                hit_point_start_time = pygame.time.get_ticks()
+                # Store the hit point coordinates
+                last_hit_point = {
+                    "x": data["hit_x"],
+                    "y": data["hit_y"]
+                }
+                # Store the target position at the time of hit
+                last_hit_target_pos = {
+                    "x": data["target_x"],
+                    "y": data["target_y"]
+                }
             print(f"Hit result: {data}")  # Debug print
         elif data["type"] == "sync_response":
             # Get all timestamps
@@ -140,6 +161,112 @@ def draw_hit_marker(screen, hit_result):
     text_surface = font.render(text, True, color)
     text_rect = text_surface.get_rect(center=(GAME_WIDTH//2, HEIGHT//2 - 40))
     screen.blit(text_surface, text_rect)
+
+def draw_hit_point():
+    if not last_hit_point:
+        return
+        
+    current_time = pygame.time.get_ticks()
+    if current_time - hit_point_start_time > HIT_POINT_TIME:
+        return
+        
+    # Draw a larger red dot at the hit point
+    pygame.draw.circle(screen, (255, 0, 0), (last_hit_point["x"], last_hit_point["y"]), 5)
+    # Draw a thicker white outline around the hit point
+    pygame.draw.circle(screen, (255, 255, 255), (last_hit_point["x"], last_hit_point["y"]), 6, 2)
+    # Draw a crosshair at the hit point
+    size = 8
+    pygame.draw.line(screen, (255, 255, 255), 
+                    (last_hit_point["x"] - size, last_hit_point["y"]), 
+                    (last_hit_point["x"] + size, last_hit_point["y"]), 1)
+    pygame.draw.line(screen, (255, 255, 255), 
+                    (last_hit_point["x"], last_hit_point["y"] - size), 
+                    (last_hit_point["x"], last_hit_point["y"] + size), 1)
+
+def draw_killcam():
+    if not last_hit_point or not last_hit_target_pos:
+        return
+        
+    current_time = pygame.time.get_ticks()
+    if current_time - hit_point_start_time > HIT_POINT_TIME:
+        return
+        
+    # Create a surface for the kill cam
+    killcam_surface = pygame.Surface((KILLCAM_SIZE, KILLCAM_SIZE))
+    killcam_surface.fill((0, 0, 0))  # Black background
+    
+    # Calculate the center of the target in the kill cam
+    target_center_x = KILLCAM_SIZE // 2
+    target_center_y = KILLCAM_SIZE // 2
+    
+    # Calculate the scaled target size
+    scaled_target_size = int(TARGET_RADIUS * 4 * KILLCAM_SCALE)
+    
+    # Draw the target in the kill cam
+    scaled_target = pygame.transform.scale(target_image, (scaled_target_size, scaled_target_size))
+    target_x = target_center_x - scaled_target_size // 2
+    target_y = target_center_y - scaled_target_size // 2
+    killcam_surface.blit(scaled_target, (target_x, target_y))
+    
+    # Calculate the hit point relative to the target center
+    hit_x = last_hit_point["x"] - last_hit_target_pos["x"]
+    hit_y = last_hit_point["y"] - last_hit_target_pos["y"]
+    
+    # Scale the hit point coordinates
+    scaled_hit_x = target_center_x + int(hit_x * KILLCAM_SCALE)
+    scaled_hit_y = target_center_y + int(hit_y * KILLCAM_SCALE)
+    
+    # Draw a larger pulsing effect around the hit point
+    pulse_size = 15 + int(8 * math.sin(current_time / 100))  # Larger pulsing size
+    pygame.draw.circle(killcam_surface, (0, 255, 0, 128), (scaled_hit_x, scaled_hit_y), pulse_size)
+    
+    # Draw a second pulsing circle for more emphasis
+    pulse_size2 = 8 + int(4 * math.sin(current_time / 150))  # Different frequency
+    pygame.draw.circle(killcam_surface, (0, 255, 0, 200), (scaled_hit_x, scaled_hit_y), pulse_size2)
+    
+    # Draw a larger green dot at the hit point
+    pygame.draw.circle(killcam_surface, (0, 255, 0), (scaled_hit_x, scaled_hit_y), 8)
+    
+    # Draw a thicker white outline around the hit point
+    pygame.draw.circle(killcam_surface, (255, 255, 255), (scaled_hit_x, scaled_hit_y), 10, 2)
+    
+    # Draw a larger crosshair at the hit point
+    size = 15
+    thickness = 2
+    pygame.draw.line(killcam_surface, (255, 255, 255), 
+                    (scaled_hit_x - size, scaled_hit_y), 
+                    (scaled_hit_x + size, scaled_hit_y), thickness)
+    pygame.draw.line(killcam_surface, (255, 255, 255), 
+                    (scaled_hit_x, scaled_hit_y - size), 
+                    (scaled_hit_x, scaled_hit_y + size), thickness)
+    
+    # Draw a "HIT" text above the hit point with a dark background
+    font = pygame.font.SysFont(None, 28, bold=True)  # Larger, bold font
+    hit_text = font.render("HIT", True, (0, 255, 0))
+    text_rect = hit_text.get_rect(center=(scaled_hit_x, scaled_hit_y - 25))
+    
+    # Draw a dark background behind the text
+    padding = 5
+    bg_rect = pygame.Rect(
+        text_rect.left - padding,
+        text_rect.top - padding,
+        text_rect.width + padding * 2,
+        text_rect.height + padding * 2
+    )
+    pygame.draw.rect(killcam_surface, (0, 0, 0), bg_rect)
+    pygame.draw.rect(killcam_surface, (0, 255, 0), bg_rect, 1)  # Green border around text background
+    
+    killcam_surface.blit(hit_text, text_rect)
+    
+    # Draw the kill cam box in the top right corner
+    box_x = GAME_WIDTH - KILLCAM_SIZE - 20
+    box_y = 20
+    
+    # Draw a border around the kill cam
+    pygame.draw.rect(screen, (0, 255, 0), (box_x - 2, box_y - 2, KILLCAM_SIZE + 4, KILLCAM_SIZE + 4), 2)
+    
+    # Draw the kill cam surface
+    screen.blit(killcam_surface, (box_x, box_y))
 
 def draw_sidebar():
     # Draw sidebar background
@@ -279,7 +406,10 @@ def game_loop():
         
         # Draw target if position exists
         if delayed_pos:
-            pygame.draw.circle(screen, (255, 0, 0), (delayed_pos["x"], delayed_pos["y"]), TARGET_RADIUS)
+            # Calculate position to center the target image
+            target_x = delayed_pos["x"] - target_image.get_width() // 2
+            target_y = delayed_pos["y"] - target_image.get_height() // 2
+            screen.blit(target_image, (target_x, target_y))
         
         # Draw crosshair
         mx, my = pygame.mouse.get_pos()
@@ -295,6 +425,9 @@ def game_loop():
         
         # Draw hit marker
         draw_hit_marker(screen, last_hit_result)
+        
+        # Draw kill cam
+        draw_killcam()
         
         # Draw sidebar
         draw_sidebar()

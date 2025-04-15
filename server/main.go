@@ -14,11 +14,10 @@ import (
 )
 
 const (
-	TARGET_RADIUS = 5   // TODO: this should be stored in the server
 	WIDTH         = 1080
 	HEIGHT        = 720
 	REDIS_KEY     = "target_positions"
-	HIT_RADIUS    = 15  // Increased hit detection radius for easier testing
+	HIT_RADIUS    = 60  // Increased hit detection radius for easier testing
 	POS_SIZE 	  = 100 // Store last 100 positions
 	COMPENSATION_WINDOW = 500 // Allows 500ms compensation window
 )
@@ -348,6 +347,10 @@ func (gs *GameServer) HandleShoot(conn *websocket.Conn, clientShootTime, serverR
 				"hit":       true,
 				"distance":  dist,
 				"timeDiff":  minTimeDiff,
+				"hit_x":     clientPerceivePos.X,
+				"hit_y":     clientPerceivePos.Y,
+				"target_x":  closestPos.X,
+				"target_y":  closestPos.Y,
 			}
 			conn.WriteJSON(result)
 			return
