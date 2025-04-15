@@ -15,12 +15,12 @@ import (
 
 const (
 	TARGET_RADIUS = 5   // TODO: this should be stored in the server
-	WIDTH         = 1280
+	WIDTH         = 1080
 	HEIGHT        = 720
 	REDIS_KEY     = "target_positions"
-	HIT_RADIUS    = 30  // Increased hit detection radius for easier testing
+	HIT_RADIUS    = 15  // Increased hit detection radius for easier testing
 	POS_SIZE 	  = 100 // Store last 100 positions
-	COMPENSATION_WINDOW = 250 // Allows 250ms compensation window
+	COMPENSATION_WINDOW = 500 // Allows 500ms compensation window
 )
 
 type Position struct {
@@ -271,6 +271,7 @@ func (gs *GameServer) HandleConnection(w http.ResponseWriter, r *http.Request) {
 					Y: int(data["y"].(float64)),
 				},
 				int64(data["offset"].(float64)),
+				data["compensation_enabled"].(bool),
 			)
 		case "latency_update":
 			// Client is reporting its measured RTT
@@ -289,12 +290,18 @@ func (gs *GameServer) HandleConnection(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (gs *GameServer) HandleShoot(conn *websocket.Conn, clientShootTime, serverReceivedTime int64, clientPerceivePos Position, clientOffset int64) {
+func (gs *GameServer) HandleShoot(conn *websocket.Conn, clientShootTime, serverReceivedTime int64, clientPerceivePos Position, clientOffset int64, compensationEnabled bool) {
 	gs.mutex.Lock()
 	defer gs.mutex.Unlock()
 
-	// Convert client time to server time using the provided offset
-	targetTime := clientShootTime + clientOffset
+	var targetTime int64
+	if compensationEnabled {
+		// Convert client time to server time using the provided offset
+		targetTime = clientShootTime + clientOffset
+	} else {
+		// If compensation is disabled, use the current server time
+		targetTime = serverReceivedTime
+	}
 
 	// Lag compensation window (250ms)
 	lagCompensationWindow := int64(COMPENSATION_WINDOW)
@@ -312,8 +319,8 @@ func (gs *GameServer) HandleShoot(conn *websocket.Conn, clientShootTime, serverR
 	}
 
 	// Debug logging
-	log.Printf("Shoot attempt - Client pos: (%d, %d), Client Time: %d, Server Time: %d, Offset: %d", 
-		clientPerceivePos.X, clientPerceivePos.Y, clientShootTime, targetTime, clientOffset)
+	log.Printf("Shoot attempt - Client pos: (%d, %d), Client Time: %d, Server Time: %d, Offset: %d, Compensation: %v", 
+		clientPerceivePos.X, clientPerceivePos.Y, clientShootTime, targetTime, clientOffset, compensationEnabled)
 	log.Printf("Looking for positions around time: %d (±%d ms)", targetTime, lagCompensationWindow)
 	log.Printf("Number of positions to check: %d", len(positions))
 
