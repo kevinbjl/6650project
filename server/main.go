@@ -17,7 +17,7 @@ const (
 	WIDTH         = 1080
 	HEIGHT        = 720
 	REDIS_KEY     = "target_positions"
-	HIT_RADIUS    = 60  // Increased hit detection radius for easier testing
+	HIT_RADIUS    = 40  // Increased hit detection radius for easier testing
 	POS_SIZE 	  = 100 // Store last 100 positions
 	COMPENSATION_WINDOW = 500 // Allows 500ms compensation window
 )

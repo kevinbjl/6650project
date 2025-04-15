@@ -9,7 +9,7 @@ import math
 WIDTH, HEIGHT = 1280, 720
 SIDEBAR_WIDTH = 200
 GAME_WIDTH = WIDTH - SIDEBAR_WIDTH
-TARGET_RADIUS = 30 # TODO: this should be stored in the server
+TARGET_RADIUS = 20 # TODO: this should be stored in the server
 CROSSHAIR_SIZE = 15
 MUZZLE_FLASH_TIME = 100  # Flash duration in milliseconds
 HIT_MARKER_TIME = 500   # Hit marker display duration in milliseconds
