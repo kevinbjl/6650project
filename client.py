@@ -111,6 +111,13 @@ def draw_hit_marker(screen, hit_result):
                     (WIDTH//2 + size, HEIGHT//2 + size), thickness)
     pygame.draw.line(screen, color, (WIDTH//2 - size, HEIGHT//2 + size), 
                     (WIDTH//2 + size, HEIGHT//2 - size), thickness)
+    
+    # Draw hit/miss text
+    font = pygame.font.SysFont(None, 36)
+    text = "HIT" if hit_result["hit"] else "MISS"
+    text_surface = font.render(text, True, color)
+    text_rect = text_surface.get_rect(center=(WIDTH//2, HEIGHT//2 - 40))
+    screen.blit(text_surface, text_rect)
 
 def game_loop():
     global target_position, last_hit_result, server_offset, measured_latency, last_sync_time
@@ -170,7 +177,7 @@ def game_loop():
         
         # Draw muzzle flash if active
         if muzzle_flash:
-            screen.blit(flash_image, (WIDTH // 2 - 25, HEIGHT - 250))
+            screen.blit(flash_image, (WIDTH // 2 + 130, HEIGHT - 310))
             if pygame.time.get_ticks() - flash_start_time > MUZZLE_FLASH_TIME:
                 muzzle_flash = False
         
