@@ -11,7 +11,7 @@ Server (Go):
 3. Implements rewind-based hit detection
 4. Exposes WebSocket API
 
-Client (Python):
+Client (Python/JS):
 
 1. Simulates network latency
 2. Receives target position from the server
@@ -72,5 +72,16 @@ First of all, make sure you have redis installed.
    Then monitor real-time activities:
    `monitor`
 
-3. Run the client:
+3. Run the server:
+   `cd server`
+   `go run .`
+
+4. Run the client:
+
+   For 2D client:
    `python client.py`
+
+   For 3D client:
+   `python -m http.server 8000`
+
+   Then open `https://localhost:8000` in the browser
