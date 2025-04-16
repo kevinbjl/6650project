@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"math"
+	"math/rand"
 	"net/http"
 	"sync"
 	"time"
@@ -14,19 +15,20 @@ import (
 )
 
 const (
-	WIDTH         = 1080
-	HEIGHT        = 720
-	REDIS_KEY     = "target_positions"
-	HIT_RADIUS    = 40  // Increased hit detection radius for easier testing
-	POS_SIZE 	  = 100 // Store last 100 positions
-	COMPENSATION_WINDOW = 500 // Allows 500ms compensation window
+	ARENA_SIZE      = 50
+	REDIS_KEY       = "target_positions"
+	HIT_RADIUS      = 1.0  // Match client's TARGET_RADIUS
+	POS_SIZE        = 100  // Store last 100 positions
+	COMPENSATION_WINDOW = 100 // 100ms window for lag compensation
+	NO_COMPENSATION_WINDOW = 10 // 10ms window when compensation is disabled
 )
 
 type Position struct {
-	X           int   `json:"x"`
-	Y           int   `json:"y"`
-	Timestamp   int64 `json:"timestamp"`
-	ServerTime  int64 `json:"serverTime"`
+	X           float64 `json:"x"`
+	Y           float64 `json:"y"`
+	Z           float64 `json:"z"`
+	Timestamp   int64   `json:"timestamp"`
+	ServerTime  int64   `json:"serverTime"`
 }
 
 type SyncMessage struct {
@@ -47,7 +49,11 @@ type GameServer struct {
 }
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		return true // Allow all origins
+	},
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
 }
 
 func NewGameServer() *GameServer {
@@ -137,20 +143,22 @@ func (gs *GameServer) getPositionsFromRedis(startTime, endTime int64) ([]Positio
 }
 
 func (gs *GameServer) MoveTarget() {
-	// Initialize target position at the left edge
+	// Initialize target position at a random point in the arena
 	currentPos := Position{
-		X:           0,
-		Y:           HEIGHT / 2,
+		X:           -ARENA_SIZE/4 + float64(rand.Intn(ARENA_SIZE/2)), // Keep target in visible area
+		Y:           1.0,  // Height of the target
+		Z:           -ARENA_SIZE/4 + float64(rand.Intn(ARENA_SIZE/2)), // Keep target in visible area
 		Timestamp:   time.Now().UnixMilli(),
 		ServerTime:  0,
 	}
 
-	// Movement speed in pixels per second
-	speed := 200.0
+	// Movement speed in units per second
+	speed := 5.0
 	lastUpdate := time.Now()
+	direction := 1.0  // 1 for moving right, -1 for moving left
 
 	// Debug logging for initial position
-	log.Printf("Target initialized at position: (%d, %d)", currentPos.X, currentPos.Y)
+	log.Printf("Target initialized at position: (%.2f, %.2f, %.2f)", currentPos.X, currentPos.Y, currentPos.Z)
 
 	// Test Redis connection
 	ctx := context.Background()
@@ -166,11 +174,16 @@ func (gs *GameServer) MoveTarget() {
 		lastUpdate = currentTime
 
 		// Update position based on speed
-		currentPos.X += int(speed * elapsed)
+		currentPos.X += speed * elapsed * direction
 
-		// Reset position when target reaches right edge
-		if currentPos.X >= WIDTH {
-			currentPos.X = 0
+		// Change direction when target reaches arena boundaries
+		// Keep target within visible area (ARENA_SIZE/4 to -ARENA_SIZE/4)
+		if currentPos.X >= ARENA_SIZE/4 {
+			direction = -1.0
+			currentPos.Z = -ARENA_SIZE/4 + float64(rand.Intn(ARENA_SIZE/2))
+		} else if currentPos.X <= -ARENA_SIZE/4 {
+			direction = 1.0
+			currentPos.Z = -ARENA_SIZE/4 + float64(rand.Intn(ARENA_SIZE/2))
 		}
 
 		// Update timestamps
@@ -182,24 +195,13 @@ func (gs *GameServer) MoveTarget() {
 		gs.targetPositions = []Position{currentPos}
 		gs.mutex.Unlock()
 
-		// Store position in Redis with debug logging
+		// Store position in Redis
 		if err := gs.storePositionInRedis(currentPos); err != nil {
 			log.Printf("Error storing position in Redis: %v", err)
-		} else {
-			// Verify the position was stored
-			results, err := gs.redisClient.ZRange(ctx, REDIS_KEY, -1, -1).Result()
-			if err != nil {
-				log.Printf("Error verifying Redis storage: %v", err)
-			} else if len(results) > 0 {
-				var storedPos Position
-				if err := json.Unmarshal([]byte(results[0]), &storedPos); err == nil {
-					log.Printf("Latest position in Redis: (%d, %d), Relative Time: %d", 
-						storedPos.X, storedPos.Y, storedPos.ServerTime)
-				}
-			}
 		}
 
-		// Broadcast position
+		// Broadcast position with debug logging
+		log.Printf("Broadcasting position: (%.2f, %.2f, %.2f)", currentPos.X, currentPos.Y, currentPos.Z)
 		gs.BroadcastTargetPosition(currentPos)
 
 		time.Sleep(25 * time.Millisecond)
@@ -210,8 +212,14 @@ func (gs *GameServer) BroadcastTargetPosition(pos Position) {
 	gs.mutex.Lock()
 	defer gs.mutex.Unlock()
 	message, _ := json.Marshal(map[string]interface{}{
-		"type":     "position",
-		"position": pos,
+		"type": "position",
+		"position": map[string]interface{}{
+			"x": pos.X,
+			"y": pos.Y,
+			"z": pos.Z,
+			"timestamp": pos.Timestamp,
+			"serverTime": pos.ServerTime,
+		},
 	})
 	for client := range gs.clients {
 		client.WriteMessage(websocket.TextMessage, message)
@@ -244,30 +252,39 @@ func (gs *GameServer) HandleConnection(w http.ResponseWriter, r *http.Request) {
 	gs.clients[conn] = true
 	gs.mutex.Unlock()
 
+	// Send initial position
+	if len(gs.targetPositions) > 0 {
+		gs.BroadcastTargetPosition(gs.targetPositions[0])
+	}
+
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
+			log.Println("Read Error:", err)
 			gs.mutex.Lock()
 			delete(gs.clients, conn)
-			delete(gs.clientOffsets, conn)
-			delete(gs.clientLatencies, conn)
 			gs.mutex.Unlock()
 			return
 		}
 
 		var data map[string]interface{}
-		json.Unmarshal(msg, &data)
+		if err := json.Unmarshal(msg, &data); err != nil {
+			log.Println("JSON Unmarshal Error:", err)
+			continue
+		}
 
 		switch data["type"].(string) {
 		case "sync":
 			gs.HandleSync(conn, int64(data["timestamp"].(float64)))
 		case "shoot":
-			gs.HandleShoot(conn, 
+			gs.HandleShoot(
+				conn,
 				int64(data["timestamp"].(float64)),
 				time.Now().UnixMilli(),
 				Position{
-					X: int(data["x"].(float64)),
-					Y: int(data["y"].(float64)),
+					X: data["x"].(float64),
+					Y: data["y"].(float64),
+					Z: data["z"].(float64),
 				},
 				int64(data["offset"].(float64)),
 				data["compensation_enabled"].(bool),
@@ -294,21 +311,22 @@ func (gs *GameServer) HandleShoot(conn *websocket.Conn, clientShootTime, serverR
 	defer gs.mutex.Unlock()
 
 	var targetTime int64
+	var window int64
+
 	if compensationEnabled {
 		// Convert client time to server time using the provided offset
 		targetTime = clientShootTime + clientOffset
+		window = COMPENSATION_WINDOW
 	} else {
-		// If compensation is disabled, use the current server time
+		// If compensation is disabled, use the current server time with a very small window
 		targetTime = serverReceivedTime
+		window = NO_COMPENSATION_WINDOW
 	}
 
-	// Lag compensation window (250ms)
-	lagCompensationWindow := int64(COMPENSATION_WINDOW)
-
-	// Get positions from Redis within the compensation window
+	// Get positions from Redis within the window
 	positions, err := gs.getPositionsFromRedis(
-		targetTime - lagCompensationWindow,
-		targetTime + lagCompensationWindow,
+		targetTime - window,
+		targetTime + window,
 	)
 	
 	if err != nil {
@@ -318,9 +336,9 @@ func (gs *GameServer) HandleShoot(conn *websocket.Conn, clientShootTime, serverR
 	}
 
 	// Debug logging
-	log.Printf("Shoot attempt - Client pos: (%d, %d), Client Time: %d, Server Time: %d, Offset: %d, Compensation: %v", 
-		clientPerceivePos.X, clientPerceivePos.Y, clientShootTime, targetTime, clientOffset, compensationEnabled)
-	log.Printf("Looking for positions around time: %d (±%d ms)", targetTime, lagCompensationWindow)
+	log.Printf("Shoot attempt - Client pos: (%.2f, %.2f, %.2f), Client Time: %d, Server Time: %d, Offset: %d, Compensation: %v, Window: %dms", 
+		clientPerceivePos.X, clientPerceivePos.Y, clientPerceivePos.Z, clientShootTime, targetTime, clientOffset, compensationEnabled, window)
+	log.Printf("Looking for positions around time: %d (±%d ms)", targetTime, window)
 	log.Printf("Number of positions to check: %d", len(positions))
 
 	// Find the closest position in time to when the client shot
@@ -338,10 +356,21 @@ func (gs *GameServer) HandleShoot(conn *websocket.Conn, clientShootTime, serverR
 	if minTimeDiff != int64(^uint64(0) >> 1) {
 		// Calculate distance to the target at the time of the shot
 		dist := distance(closestPos, clientPerceivePos)
-		log.Printf("Checking position (%d, %d) at relative time %d - Distance: %.2f, TimeDiff: %d, Target Radius: %.2f", 
-			closestPos.X, closestPos.Y, closestPos.ServerTime, dist, minTimeDiff, float64(HIT_RADIUS))
 		
+		// Calculate individual axis distances for debugging
+		dx := math.Abs(closestPos.X - clientPerceivePos.X)
+		dy := math.Abs(closestPos.Y - clientPerceivePos.Y)
+		dz := math.Abs(closestPos.Z - clientPerceivePos.Z)
+		
+		log.Printf("Checking position (%.2f, %.2f, %.2f) at relative time %d", 
+			closestPos.X, closestPos.Y, closestPos.Z, closestPos.ServerTime)
+		log.Printf("Distance components - X: %.2f, Y: %.2f, Z: %.2f, Total: %.2f, Target Radius: %.2f", 
+			dx, dy, dz, dist, float64(HIT_RADIUS))
+		log.Printf("Time difference: %d ms", minTimeDiff)
+		
+		// More detailed hit detection logging
 		if dist < float64(HIT_RADIUS) {
+			log.Printf("HIT! Distance: %.2f < Radius: %.2f", dist, float64(HIT_RADIUS))
 			result := map[string]interface{}{
 				"type":      "hit_result", 
 				"hit":       true,
@@ -349,11 +378,15 @@ func (gs *GameServer) HandleShoot(conn *websocket.Conn, clientShootTime, serverR
 				"timeDiff":  minTimeDiff,
 				"hit_x":     clientPerceivePos.X,
 				"hit_y":     clientPerceivePos.Y,
+				"hit_z":     clientPerceivePos.Z,
 				"target_x":  closestPos.X,
 				"target_y":  closestPos.Y,
+				"target_z":  closestPos.Z,
 			}
 			conn.WriteJSON(result)
 			return
+		} else {
+			log.Printf("MISS! Distance: %.2f >= Radius: %.2f", dist, float64(HIT_RADIUS))
 		}
 	}
 
@@ -365,7 +398,7 @@ func (gs *GameServer) HandleShoot(conn *websocket.Conn, clientShootTime, serverR
 }
 
 func distance(a, b Position) float64 {
-	return math.Sqrt(math.Pow(float64(a.X-b.X), 2) + math.Pow(float64(a.Y-b.Y), 2))
+	return math.Sqrt(math.Pow(float64(a.X-b.X), 2) + math.Pow(float64(a.Y-b.Y), 2) + math.Pow(float64(a.Z-b.Z), 2))
 }
 
 func abs(x int64) int64 {
@@ -378,7 +411,32 @@ func abs(x int64) int64 {
 func main() {
 	gameServer := NewGameServer()
 	go gameServer.MoveTarget()
-	http.HandleFunc("/ws", gameServer.HandleConnection)
+
+	// Add CORS middleware
+	corsMiddleware := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			
+			next(w, r)
+		}
+	}
+
+	// Set up routes
+	http.HandleFunc("/ws", corsMiddleware(gameServer.HandleConnection))
+	
+	// Serve static files
+	fs := http.FileServer(http.Dir("../web-client"))
+	http.Handle("/", fs)
+
 	log.Println("Server started on :8080")
-	http.ListenAndServe(":8080", nil)
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		log.Fatal("ListenAndServe: ", err)
+	}
 }
