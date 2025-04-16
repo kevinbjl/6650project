@@ -84,4 +84,4 @@ First of all, make sure you have redis installed.
    For 3D client:
    `python -m http.server 8000`
 
-   Then open `https://localhost:8000` in the browser
+   Then open `http://localhost:8000/web-client` in the browser
