@@ -77,11 +77,6 @@ First of all, make sure you have redis installed.
    `go run .`
 
 4. Run the client:
-
-   For 2D client:
-   `python client.py`
-
-   For 3D client:
    `python -m http.server 8000`
 
    Then open `http://localhost:8000/web-client` in the browser

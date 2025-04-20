@@ -373,6 +373,7 @@ document.addEventListener("click", (event) => {
     event.target.id !== "latency-slider" &&
     event.target.id !== "compensation-checkbox"
   ) {
+    // TODO: send a large amount of shoot requests with just one click
     sendShoot(event);
   }
 });
