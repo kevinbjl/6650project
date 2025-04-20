@@ -194,8 +194,9 @@ let clientStartTime = Date.now();
 
 function connectWebSocket() {
   console.log("Attempting to connect to WebSocket...");
-  const wsUrl = window.location.protocol === "https:" ? "wss://" : "ws://";
-  const host = window.location.hostname;
+  const wsUrl = "ws://";
+  const host = "ec2-54-242-91-6.compute-1.amazonaws.com";
+  // const host = window.location.hostname; // For localhost
   const port = "8080";
   ws = new WebSocket(`${wsUrl}${host}:${port}/ws`);
 
